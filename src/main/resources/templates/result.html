@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>予約完了</title>
+</head>
+<body>
+  <h1>予約が完了しました！</h1>
+
+  <p>以下の座席が予約済みになりました：</p>
+
+  <ul>
+    <li th:each="seat : ${seats}"
+        th:if="${seat.reserved}"
+        th:text="${seat.seatId}"></li>
+  </ul>
+
+  <a href="/">トップページに戻る</a>
+</body>
+</html>

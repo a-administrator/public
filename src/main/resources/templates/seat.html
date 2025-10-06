@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width" />
+  <title>新幹線ご予約</title>
+  <style>
+	
+	body {
+	    background: url("/img/seating_chart.png") 
+		no-repeat center center fixed;
+	    background-size: cover;   /*画像サイズは画面サイズに追従*/
+		background-position: center -2px;  /*← 上にずらす*/
+	  }
+	  
+    .seat-container {
+      display: grid;
+	  grid-template-columns: repeat(10, minmax(35px, 6vw));/*座席サイズは画面サイズに追従*/
+	    gap: 1vw 1.5vw;
+	    max-width: 100%;
+	    margin: 24px auto;
+		
+      justify-content: center;
+      margin: 24px auto;
+      max-width: 800px;
+    }
+    .seat {
+	  width: 6vw;   /* 画面幅の6% *//*座席サイズは画面サイズに追従*/
+	    height: 6vw;
+	    max-width: 60px;
+	    max-height: 60px;
+	    min-width: 35px;
+	    min-height: 35px;
+		
+      display: flex; align-items: center; justify-content: center;
+      border: 1px solid #666; border-radius: 6px;
+      user-select: none; cursor: pointer;
+      background: #fff; color: #333;
+      font-weight: 600;
+    }
+    .seat.reserved { background: #cfcfcf; color: #777; cursor: not-allowed; }
+    .seat.selected { background: #e53935; color: #fff; }
+    /* small helper */
+    .meta { text-align:center; margin:8px 0; color:#444; }
+  </style>
+</head>
+<body>
+  <h1>座席選択ページ</h1>
+
+  <div class="meta">
+    <span id="meta-date"></span>　　
+    <span id="meta-people"></span>　　
+    <span id="meta-fail"></span>
+  </div>
+
+  <!-- seat container (JSで生成) -->
+  <div id="seat-container" class="seat-container"></div>
+
+  <script>
+  /************************************************************************
+   * Shinkansen Seat Game — seat.html (JS-only)
+   *
+   * 前提（仕様メモに合わせて実装）
+   * - 1A〜10E を JS だけで生成
+   * - 初期グレー席は月ごとルール（9月固まり多め、5/8 は 3-5 席固まり、3月は1席ずつ等）
+   * - 自動埋まり（setInterval）で席が埋まっていく（月ごとに挙動変更）
+   * - プレイヤーが指定人数を確保する前に「確保不能」と判断したら fail -> retryNextDay or GameOver
+   * - retry 1〜2回目は日付を +1 して再描画、3回目は GameOver (走って行ってください)
+   * - Thymeleaf は使わず、URL の query (date/people) を参照して初期化
+   * - 最終的に確保できたら /reserve に POST（フォームで送信）してトップへ戻る
+   ************************************************************************/
+
+  // ---------- ユーティリティ ----------
+  function qs(name){
+    // query string helper
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get(name);
+  }
+
+  function formatDateYMD(dateObj){
+    return dateObj.toISOString().slice(0,10);
+  }
+
+  // ---------- 初期パラメータ ----------
+  const paramPeople = parseInt(qs('people') || '2', 10);
+  const paramDateStr = qs('date') || formatDateYMD(new Date());
+  window.gameDate = paramDateStr; // 可変にする（retryで +1 する）
+  let maxSelectable = Number.isFinite(paramPeople) ? paramPeople : 2;
+
+  // UI meta
+  const metaDateEl = document.getElementById('meta-date');
+  const metaPeopleEl = document.getElementById('meta-people');
+  const metaFailEl = document.getElementById('meta-fail');
+
+  // state
+  let selectedSeats = new Set();
+  let failCount = 0;
+  let autoFillTimer = null;
+
+  // seat layout constants
+  const rows = ['A','B','C','D','E'];  // A..E
+  const cols = 10; // 1..10
+
+  // helper to create seatId list in proper order 1A..10A,1B..10E
+  function createSeatIdMatrix(){
+    const ids = [];
+    for(const r of rows){
+      for(let c=1;c<=cols;c++){
+        ids.push(`${c}${r}`);
+      }
+    }
+    return ids;
+  }
+
+  // priority for auto-fill (窓側→通路→真ん中)
+  function getPriority(seatId){
+    const colLetter = seatId.slice(-1);
+    if(colLetter === 'A' || colLetter === 'E') return 1;
+    if(colLetter === 'B' || colLetter === 'D') return 2;
+    return 3; // C
+  }
+
+  // ---------- 月ごとの設定 ----------
+  function getInitialReservedCount(month){
+    if(month === 1 || month === 2) return 5;
+    if(month === 9) return 20;
+    if(month === 8 || month === 12) return 30;
+    return 10; // メモの「それ以外は同じランダム」で初期10席
+  }
+
+  function getAutoFillConfigByMonth(month){
+    // return { intervalMs, seatsPerTickRange: [min,max], mode: 'block'|'random' }
+    // values chosen to be sensible; you can tweak later
+    if(month === 3) return { intervalMs: 1300, seatsPerTickRange:[1,1], mode:'random' }; // 1席ずつ
+    if(month === 5 || month === 8) return { intervalMs: 1000, seatsPerTickRange:[3,5], mode:'block' }; // 3-5固まり
+    if(month === 9) return { intervalMs: 900, seatsPerTickRange:[8,16], mode:'block' }; // 一気に大量
+    if(month === 12) return { intervalMs: 700, seatsPerTickRange:[1,5], mode:'random' }; // 高速1-5
+    // default
+    return { intervalMs: 1500, seatsPerTickRange:[1,2], mode:'random' };
+  }
+
+  // ---------- DOM / rendering ----------
+  function renderSeats(){
+    const container = document.getElementById('seat-container');
+    container.innerHTML = ''; // clear
+    const seatIds = createSeatIdMatrix();
+    seatIds.forEach(id => {
+      const div = document.createElement('div');
+      div.className = 'seat available';
+      div.dataset.seatId = id;
+      div.textContent = id;
+      container.appendChild(div);
+    });
+  }
+
+  // helper to get available/reserved seat elements
+  function getAvailableSeatElements(){
+    return Array.from(document.querySelectorAll('.seat.available'));
+  }
+  function getReservedSeatElements(){
+    return Array.from(document.querySelectorAll('.seat.reserved'));
+  }
+
+  // ---------- 初期埋めロジック（メモ準拠） ----------
+  // fill count seats into the layout according to fillMode:
+  // - 'block' : try to place contiguous blocks (good for family/group/修学旅行)
+  // - 'random': pick seats according to priority and randomness
+  function initialFillSeats(count, fillMode){
+    if(count <= 0) return;
+    const seatEls = Array.from(document.querySelectorAll('.seat.available'));
+    // For block placement: try to place blocks across rows, preferring windows via priority
+    if(fillMode === 'block'){
+      // Attempt multiple blocks until we have filled count seats
+      let remaining = count;
+      const maxBlockSize = 5;
+      const minBlockSize = 2;
+      // For 9月 case we might want big blocks — allow larger
+      while(remaining > 0 && seatEls.length > 0){
+        // choose block size
+        const blockSize = Math.min(remaining, Math.floor(Math.random()*(maxBlockSize - minBlockSize +1)) + minBlockSize);
+        // try to find a place for contiguous block
+        const placed = tryPlaceContiguousBlock(blockSize);
+        if(!placed){
+          // fallback: pick highest-priority single seats until remaining satisfied
+          const available = getAvailableSeatElements();
+          if(available.length === 0) break;
+          // sort by priority then random within same priority
+          available.sort((a,b) => getPriority(a.dataset.seatId) - getPriority(b.dataset.seatId));
+          const toPick = available.slice(0, remaining);
+          toPick.forEach(el => markReserved(el));
+          remaining -= toPick.length;
+        } else {
+          remaining -= placed;
+        }
+        // refresh seatEls
+        seatEls.splice(0, seatEls.length); // clear for safety
+      }
+      return;
+    }
+
+    // random fill with priority bias
+    let available = getAvailableSeatElements();
+    if(available.length === 0) return;
+    // sort by priority ascending (1 = window)
+    available.sort((a,b) => getPriority(a.dataset.seatId) - getPriority(b.dataset.seatId));
+    // to avoid always taking exact same seats, group by priority and sample
+    const grouped = {};
+    available.forEach(el => {
+      const p = getPriority(el.dataset.seatId);
+      grouped[p] = grouped[p] || [];
+      grouped[p].push(el);
+    });
+    // pick seats from high-priority groups first
+    let remaining = count;
+    [1,2,3].forEach(p => {
+      if(remaining <= 0) return;
+      const arr = grouped[p] || [];
+      // shuffle arr and pick up to remaining
+      shuffleArray(arr);
+      const take = Math.min(arr.length, remaining);
+      for(let i=0;i<take;i++){
+        markReserved(arr[i]);
+        remaining--;
+      }
+    });
+  }
+
+  // try to place a contiguous block of size blockSize on any row; returns number placed or 0
+  function tryPlaceContiguousBlock(blockSize){
+    // iterate rows in random order for variety
+    const rowOrder = shuffleArray([...rows]);
+    for(const r of rowOrder){
+      // columns 1..cols-blockSize+1 possible starts
+      const possibleStarts = [];
+      for(let start=1; start<=cols - blockSize +1; start++){
+        // check seats start..start+blockSize-1 in row r are all available
+        let ok = true;
+        for(let c=start; c<start+blockSize; c++){
+          const id = `${c}${r}`;
+          const el = document.querySelector(`.seat[data-seat-id='${id}']`);
+          if(!el || el.classList.contains('reserved')) { ok=false; break; }
+        }
+        if(ok) possibleStarts.push(start);
+      }
+      if(possibleStarts.length === 0) continue;
+      // pick a start randomly
+      const startCol = possibleStarts[Math.floor(Math.random()*possibleStarts.length)];
+      for(let c=startCol; c<startCol+blockSize; c++){
+        const id = `${c}${r}`;
+        const el = document.querySelector(`.seat[data-seat-id='${id}']`);
+        markReserved(el);
+      }
+      return blockSize;
+    }
+    return 0;
+  }
+
+  // mark element as reserved visually and class-wise
+  function markReserved(el){
+    if(!el) return;
+    el.classList.remove('available');
+    el.classList.add('reserved');
+    el.style.backgroundColor = '#cfcfcf';
+    el.style.color = '#777';
+    el.style.cursor = 'not-allowed';
+  }
+
+  // ---------- auto-fill behavior ----------
+  function pickSeatsForAutoFill(count, mode){
+    // returns array of elements to reserve
+    const available = getAvailableSeatElements();
+    if(available.length === 0) return [];
+    if(mode === 'block'){
+      // attempt to place contiguous block(s)
+      const placed = [];
+      let remaining = count;
+      // attempt blocks of sizes up to remaining
+      while(remaining > 0){
+        const blockSize = Math.min(remaining, Math.floor(Math.random()* (Math.min(5, remaining)) ) + 1);
+        const success = tryFindBlockForAutoFill(blockSize);
+        if(success && success.length > 0){
+          success.forEach(el => placed.push(el));
+          remaining -= success.length;
+        } else {
+          // fallback: take highest priority seats
+          const sorted = available.sort((a,b) => getPriority(a.dataset.seatId) - getPriority(b.dataset.seatId));
+          const toTake = sorted.slice(0, remaining);
+          toTake.forEach(el => {
+            if(!placed.includes(el)) placed.push(el);
+          });
+          break;
+        }
+      }
+      return placed;
+    } else {
+      // random but biased to priority
+      const grouped = {};
+      available.forEach(el => {
+        const p = getPriority(el.dataset.seatId);
+        grouped[p] = grouped[p] || [];
+        grouped[p].push(el);
+      });
+      const result = [];
+      [1,2,3].forEach(p => {
+        if(result.length >= count) return;
+        const group = grouped[p] || [];
+        shuffleArray(group);
+        for(const el of group){
+          if(result.length >= count) break;
+          result.push(el);
+        }
+      });
+      return result.slice(0, count);
+    }
+  }
+
+  // try to find a contiguous block of size blockSize for auto-fill, return array of elements or null
+  function tryFindBlockForAutoFill(blockSize){
+    const rowOrder = shuffleArray([...rows]);
+    for(const r of rowOrder){
+      for(let start=1; start<=cols - blockSize +1; start++){
+        let ok = true;
+        const els = [];
+        for(let c=start; c<start+blockSize; c++){
+          const id = `${c}${r}`;
+          const el = document.querySelector(`.seat[data-seat-id='${id}']`);
+          if(!el || el.classList.contains('reserved') || el.classList.contains('selected')) { ok=false; break; }
+          els.push(el);
+        }
+        if(ok) return els;
+      }
+    }
+    return null;
+  }
+
+  function autoFillTick(monthConfig){
+    // monthConfig: {intervalMs, seatsPerTickRange, mode}
+    const range = monthConfig.seatsPerTickRange;
+    const min = range[0], max = range[1];
+    const count = Math.max(1, Math.floor(Math.random()*(max - min +1)) + min);
+    const picks = pickSeatsForAutoFill(count, monthConfig.mode);
+    if(picks.length === 0) return;
+
+    // mark them reserved one by one (visual immediacy)
+    for(const el of picks){
+      markReserved(el);
+    }
+
+    checkForImpossibleSituation(); // after auto-fill, check fail condition
+  }
+
+  // ---------- failure / retry logic ----------
+  function neededRemainingCount(){
+    return Math.max(0, maxSelectable - selectedSeats.size);
+  }
+
+  function checkForImpossibleSituation(){
+    const available = getAvailableSeatElements();
+    const need = neededRemainingCount();
+    // if available seats fewer than needed -> impossible
+    if(available.length < need){
+      // fail
+      handleFail();
+    }
+  }
+
+  function handleFail(){
+    // stop autoFill while processing
+    stopAutoFill();
+
+    failCount++;
+    metaFailEl.textContent = `失敗回数: ${failCount}/3`;
+
+    if(failCount >= 3){
+      // Game Over
+      setTimeout(() => {
+        alert('座席のご予約ができなくなりました。目的地まで走ってください。');
+        window.location.href = '/'; // back to top
+      }, 50);
+      return;
+    }
+
+    // 1～2回目: retry next day (date +1), reset selections and regenerate seats
+    setTimeout(() => {
+      alert(`席が確保できませんでした。翌日（${failCount}回目）に再挑戦します。`);
+      retryNextDay();
+    }, 50);
+  }
+
+  function retryNextDay(){
+    // increment gameDate by 1 day
+    const current = new Date(window.gameDate);
+    current.setDate(current.getDate() + 1);
+    window.gameDate = formatDateYMD(current);
+    // reset selections
+    selectedSeats.clear();
+    // reset fail visual state
+    metaDateEl.textContent = `日付: ${window.gameDate}`;
+    // recreate seats and initial fill
+    regenerateForNewDay();
+  }
+
+  // ---------- helpers ----------
+  function shuffleArray(arr){
+    for(let i = arr.length -1; i>0; i--){
+      const j = Math.floor(Math.random()*(i+1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  function stopAutoFill(){
+    if(autoFillTimer){
+      clearInterval(autoFillTimer);
+      autoFillTimer = null;
+    }
+  }
+
+  // ---------- regeneration for new day ----------
+  function regenerateForNewDay(){
+    stopAutoFill();
+    // clear DOM and re-render seats
+    renderSeats();
+    // initial fill for new date
+    const month = new Date(window.gameDate).getMonth() + 1;
+    const initialCount = getInitialReservedCount(month);
+    // decide fill mode for initial fill: 9月は block-heavy, others random but can be block for family months
+    let fillMode = 'random';
+    if(month === 9) fillMode = 'block';
+    else if(month === 5 || month === 8) fillMode = 'block';
+    else if(month === 3) fillMode = 'random';
+    initialFillSeats(initialCount, fillMode);
+
+    // reattach click handlers and meta
+    attachClickHandlers();
+    // restart auto fill with same logic
+    startAutoFill();
+  }
+
+  // ---------- attach click handlers (call after rendering) ----------
+  function attachClickHandlers(){
+    // clear selected visual
+    document.querySelectorAll('.seat').forEach(s => s.classList.remove('selected'));
+    selectedSeats.clear();
+
+    document.querySelectorAll('.seat.available').forEach(seat => {
+      seat.onclick = () => {
+        if(seat.classList.contains('reserved')) return;
+
+        const seatId = seat.dataset.seatId;
+        if(selectedSeats.has(seatId)){
+          selectedSeats.delete(seatId);
+          seat.classList.remove('selected');
+        } else {
+          if(selectedSeats.size >= maxSelectable){
+            alert('選択できる座席は ' + maxSelectable + ' 席までです。');
+            return;
+          }
+          selectedSeats.add(seatId);
+          seat.classList.add('selected');
+        }
+
+        // if reached target, submit reservation
+        if(selectedSeats.size === maxSelectable){
+          // finalize: stop auto-fill and POST form to /reserve (form with multiple seatIds)
+          stopAutoFill();
+          setTimeout(submitReservationForm, 100);
+        }
+      };
+    });
+  }
+
+  // ---------- submit reservation via form POST (multiple seatIds keys) ----------
+  function submitReservationForm(){
+    // create a form and append multiple inputs named seatIds
+    const form = document.createElement('form');
+    form.method = 'post';
+    form.action = '/reserve';
+    selectedSeats.forEach(id=>{
+      const inp = document.createElement('input');
+      inp.type = 'hidden';
+      inp.name = 'seatIds';
+      inp.value = id;
+      form.appendChild(inp);
+    });
+    document.body.appendChild(form);
+    form.submit();
+  }
+
+  // ---------- initial orchestration ----------
+  function startAutoFill(){
+    // determine config from month
+    const month = new Date(window.gameDate).getMonth() + 1;
+    const cfg = getAutoFillConfigByMonth(month);
+
+    // ensure previous timer cleared
+    stopAutoFill();
+
+    // use setInterval that calls autoFillTick(cfg)
+    autoFillTimer = setInterval(()=> autoFillTick(cfg), cfg.intervalMs);
+  }
+
+  // ---------- boot (initial render & fill) ----------
+  function boot(){
+    metaDateEl.textContent = `日付: ${window.gameDate}`;
+    metaPeopleEl.textContent = `人数: ${maxSelectable} 人`;
+    metaFailEl.textContent = `失敗回数: ${failCount}/3`;
+
+    renderSeats();
+    // initial fill per month rules
+    const month = new Date(window.gameDate).getMonth() + 1;
+    const initialCount = getInitialReservedCount(month);
+
+    let fillMode = 'random';
+    if(month === 9) fillMode = 'block';
+    else if(month === 5 || month === 8) fillMode = 'block';
+    else if(month === 3) fillMode = 'random';
+
+    initialFillSeats(initialCount, fillMode);
+
+    attachClickHandlers();
+    startAutoFill();
+  }
+
+  // run boot on load
+  document.addEventListener('DOMContentLoaded', boot);
+  </script>
+</body>
+</html>

@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width" />
+  <title>新幹線ご予約</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: "メイリオ", "Noto Sans JP", "Yu Gothic", sans-serif;
+      background-color: #e6f1ff; 
+      color: #003366;
+      display: flex;
+      justify-content: center;
+      padding: 40px 20px;
+    }
+
+    .card {
+      width: min(720px, 92vw);
+      background: #ffffff;
+      border: 1px solid #c7d7e8;
+      border-radius: 8px;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+      padding: 24px 22px;
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: 24px;
+      font-weight: 700;
+      color: #002855;
+      text-align: center;
+    }
+
+    .lead {
+      margin: 0 0 20px;
+      font-size: 14px;
+      color: #003366;
+      text-align: center;
+    }
+
+    label {
+      font-size: 14px;
+      font-weight: 600;
+      color: #003366;
+      margin-bottom: 4px; //タイトル～枠の距離
+      display: block;
+    }
+
+    select, input[type="date"], input[type="number"] {
+      width: 100%;
+      padding: 8px 10px;　//8pxはマス目の縦幅、10pxは入力文字のインデント距離
+      font-size: 15px;
+      color: #003366;
+      background: #fff;
+      border: 1px solid #b5c7d8;
+      border-radius: 4px;
+      outline: none;
+box-sizing: border-box;//枠の幅揃える
+    }
+
+    select:focus, input:focus {
+      border-color: #007bff;
+      box-shadow: 0 0 0 2px rgba(0,123,255,0.25);
+    }
+
+    .btn {
+      background-color: #007bff;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 10px 20px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      min-width: 180px;
+    }
+
+/* Chrome・Edge・Safari系（スピンボタン非表示対策） */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  opacity: 1;
+  -webkit-appearance: auto;
+  margin: 0;
+}
+
+/* Firefox用（スピンボタン非表示対策） */
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+    .btn:hover {
+      background-color: #005dc1;
+    }
+
+    .note {
+      text-align: center;
+      font-size: 12px;
+      color: #003366;
+      margin-top: 8px;
+    }
+
+#searchForm {
+  width: 500px;
+  max-width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+  .form-item {
+ width: 100%;
+  max-width: 500px;
+  max-width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+margin-top: 7px;//枠～次のタイトルの距離
+}
+
+.actions {
+  width: 500px;
+  max-width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+margin-top: 10px; //人数入力枠～ボタンの距離
+}//ボタン配置
+
+  </style>
+  
+</head>
+<body>	
+  <div class="card">
+
+    <h1>JR 新幹線ご予約</h1>
+
+    <form id="searchForm" th:action="@{/seat}" method="get">
+<div class="form-item">
+        
+          <label for="fromPref">出発地</label>
+          <select id="fromPref" name="from" required>
+            <option value="" selected disabled>選択してください</option>
+            <option>北海道</option><option>青森県</option><option>岩手県</option><option>宮城県</option>
+            <option>秋田県</option><option>山形県</option><option>福島県</option>
+            <option>茨城県</option><option>栃木県</option><option>群馬県</option><option>埼玉県</option><option>千葉県</option><option>東京都</option><option>神奈川県</option>
+            <option>新潟県</option><option>富山県</option><option>石川県</option><option>福井県</option>
+            <option>山梨県</option><option>長野県</option>
+            <option>岐阜県</option><option>静岡県</option><option>愛知県</option>
+            <option>三重県</option>
+            <option>滋賀県</option><option>京都府</option><option>大阪府</option><option>兵庫県</option><option>奈良県</option><option>和歌山県</option>
+            <option>鳥取県</option><option>島根県</option><option>岡山県</option><option>広島県</option><option>山口県</option>
+            <option>徳島県</option><option>香川県</option><option>愛媛県</option><option>高知県</option>
+            <option>福岡県</option><option>佐賀県</option><option>長崎県</option><option>熊本県</option><option>大分県</option><option>宮崎県</option><option>鹿児島県</option>
+            <option>沖縄県</option>
+          </select>
+        </div>
+
+        <div class="form-item">
+          <label for="toPref">行き先</label>
+          <select id="toPref" name="to" required>
+            <option value="" selected disabled>選択してください</option>
+            <!-- 同じ47都道府県をそのまま複製 -->
+            <option>北海道</option><option>青森県</option><option>岩手県</option><option>宮城県</option>
+            <option>秋田県</option><option>山形県</option><option>福島県</option>
+            <option>茨城県</option><option>栃木県</option><option>群馬県</option><option>埼玉県</option><option>千葉県</option><option>東京都</option><option>神奈川県</option>
+            <option>新潟県</option><option>富山県</option><option>石川県</option><option>福井県</option>
+            <option>山梨県</option><option>長野県</option>
+            <option>岐阜県</option><option>静岡県</option><option>愛知県</option>
+            <option>三重県</option>
+            <option>滋賀県</option><option>京都府</option><option>大阪府</option><option>兵庫県</option><option>奈良県</option><option>和歌山県</option>
+            <option>鳥取県</option><option>島根県</option><option>岡山県</option><option>広島県</option><option>山口県</option>
+            <option>徳島県</option><option>香川県</option><option>愛媛県</option><option>高知県</option>
+            <option>福岡県</option><option>佐賀県</option><option>長崎県</option><option>熊本県</option><option>大分県</option><option>宮崎県</option><option>鹿児島県</option>
+            <option>沖縄県</option>
+          </select>
+        </div>
+
+<div class="form-item">
+ <label for="travelDate">予約したい日</label>
+          <input id="travelDate" name="date" type="date" required />
+        </div>
+
+        <div class="form-item">
+          <label for="people">ご予約人数</label>
+          <input id="people" name="people" type="number" min="1" max="10" value="1" required />
+        </div>
+      
+
+      <div class="actions">
+        <button class="btn" type="submit" id="goSeat">座席指定はこちら</button>
+      </div>
+	  
+      <p class="note">※白い座席（現在空席）から選択してください。
+		グレーの座席はご予約できません。<br>
+		行楽・帰省シーズンはお早めにご予約願います。
+	  </p>
+    </form>
+	</div><!--　←div class cardの閉じタグ-->
+
+  <script>
+    // ちょいUX向上：出発地と行き先が同じなら警告
+    document.getElementById('searchForm').addEventListener('submit', function(e){
+      const from = document.getElementById('fromPref').value;
+      const to   = document.getElementById('toPref').value;
+      if (from && to && from === to) {
+        e.preventDefault();
+        alert('出発地と行き先が同じです。別の行き先を選んでください。');
+      }
+    });
+    // 日付の最小値＝今日
+    (function(){
+      const d = new Date();
+      const pad = n => String(n).padStart(2,'0');
+      const today = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+      const input = document.getElementById('travelDate');
+      input.min = today;
+    })();
+  </script>
+</body>
+</html>
